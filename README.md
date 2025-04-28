@@ -81,3 +81,11 @@ MIT License - Feel free to use, modify, and distribute the code, but please reta
 - Level acceleration capped at level 15
 
 Please feel free to submit Issues and Pull Requests!
+
+## Screenshots
+
+### Main Screen
+![Start](img/1745831750662.jpg)
+
+### Info Screen
+![Pause](img/1745831750650.jpg)
