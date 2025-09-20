@@ -1,5 +1,32 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
+#include <HardwareTimer.h>
+
+// Sound feature toggle - set to 0 if no buzzer is available
+#define ENABLE_SOUND 1
+
+#if ENABLE_SOUND
+// Buzzer configuration
+#define BUZZER_PIN PA8
+HardwareTimer *buzzerTimer = new HardwareTimer(TIM1);
+
+// Note frequency definitions (Hz)
+#define NOTE_REST 0
+#define NOTE_C4  262
+#define NOTE_D4  294
+#define NOTE_E4  330
+#define NOTE_F4  349
+#define NOTE_G4  392
+#define NOTE_A4  440
+#define NOTE_B4  494
+#define NOTE_C5  523
+#define NOTE_D5  587
+#define NOTE_E5  659
+#define NOTE_F5  698
+#define NOTE_G5  784
+#define NOTE_A5  880
+#define NOTE_B5  988
+#endif
 
 // Display configuration
 U8G2_SSD1306_128X64_NONAME_1_4W_HW_SPI mainDisp(U8G2_R1, PA4, PB1, PB0);
@@ -106,6 +133,24 @@ bool rotKeyPressed = false;
 unsigned long rotKeyLastTime = 0;
 bool leftRightCombo = false;
 
+#if ENABLE_SOUND
+// Sound state management
+struct SoundNote {
+  uint32_t frequency;
+  uint32_t duration;
+};
+
+struct SoundSequence {
+  SoundNote notes[8];
+  uint8_t noteCount;
+  uint8_t currentNote;
+  unsigned long noteStartTime;
+  bool isPlaying;
+};
+
+SoundSequence currentSound = {{{0, 0}}, 0, 0, 0, false};
+#endif
+
 // Function declarations
 void generateNewPiece(Tetromino &t);
 void drawMainScreen();
@@ -118,6 +163,20 @@ void updateGhost();
 void resetGame();
 void generateNewBag(uint8_t *bag);
 
+#if ENABLE_SOUND
+// Sound-related functions
+void initBuzzer();
+void updateSound();
+void playSound(const SoundNote notes[], uint8_t noteCount);
+void stopSound();
+void playMoveSound();
+void playRotateSound();
+void playDropSound();
+void playLineClearSound();
+void playGameOverSound();
+void playPauseSound();
+#endif
+
 void setup()
 {
   mainDisp.begin();
@@ -129,6 +188,10 @@ void setup()
   pinMode(BTN_DOWN, INPUT_PULLDOWN);
   pinMode(BTN_UP, INPUT_PULLDOWN);
   pinMode(BTN_ROT, INPUT_PULLDOWN);
+
+#if ENABLE_SOUND
+  initBuzzer();
+#endif
 
   resetGame();
 }
@@ -169,6 +232,9 @@ void rotatePiece(bool clockwise)
     if (!checkCollision(temp))
     {
       current = temp;
+#if ENABLE_SOUND
+      playRotateSound();
+#endif
       return;
     }
   }
@@ -227,6 +293,13 @@ uint8_t clearLines()
       y++;
     }
   }
+  
+#if ENABLE_SOUND
+  if (linesCleared > 0) {
+    playLineClearSound();
+  }
+#endif
+  
   return linesCleared;
 }
 
@@ -371,6 +444,10 @@ void drawInfoScreen()
 
 void loop()
 {
+#if ENABLE_SOUND
+  updateSound();  // Non-blocking sound update
+#endif
+
   static unsigned long lastInput = 0;
   bool currentRotState = digitalRead(BTN_ROT);
   bool leftState = digitalRead(BTN_LEFT);
@@ -382,6 +459,9 @@ void loop()
   {
     gameState = PAUSE;
     leftRightCombo = true;
+#if ENABLE_SOUND
+    playPauseSound();
+#endif
   }
   else if (!(leftState && rightState))
   {
@@ -419,6 +499,9 @@ void loop()
       }
       if (moved)
       {
+#if ENABLE_SOUND
+        playDropSound();
+#endif
         mergePiece();
         uint8_t cleared = clearLines();
         if (cleared > 0)
@@ -445,22 +528,34 @@ void loop()
     if (gameState == PLAYING)
     {
       Tetromino temp = current;
+      bool moved = false;
 
       // Horizontal movement
-      if (leftState && !rightState)
+      if (leftState && !rightState) {
         temp.x--;
-      if (rightState && !leftState)
+        moved = true;
+      }
+      if (rightState && !leftState) {
         temp.x++;
+        moved = true;
+      }
 
       // Soft drop
       if (digitalRead(BTN_DOWN))
       {
         temp.y++;
         score += 1;
+        moved = true;
       }
 
-      if (!checkCollision(temp))
+      if (!checkCollision(temp)) {
         current = temp;
+#if ENABLE_SOUND
+        if (moved) {
+          playMoveSound();
+        }
+#endif
+      }
     }
 
     // State control
@@ -481,6 +576,9 @@ void loop()
       case PAUSE:
         gameState = PLAYING;
         stateChanged = true;
+#if ENABLE_SOUND
+        playPauseSound();  // Sound effect when resuming game
+#endif
         break;
       default:
         break;
@@ -510,8 +608,12 @@ void loop()
       }
       current = next;
       generateNewPiece(next);
-      if (checkCollision(current))
+      if (checkCollision(current)) {
         gameState = GAME_OVER;
+#if ENABLE_SOUND
+        playGameOverSound();
+#endif
+      }
     }
     else
     {
@@ -524,3 +626,141 @@ void loop()
   drawMainScreen();
   drawInfoScreen();
 }
+
+#if ENABLE_SOUND
+// Sound-related function implementations
+
+void initBuzzer() {
+  // Configure PWM pin
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  
+  // Initialize timer - default 1kHz frequency, 50% duty cycle
+  buzzerTimer->setPWM(1, BUZZER_PIN, 1000, 50); // Channel 1, pin, frequency, duty cycle
+  
+  // Pause PWM output in initial state
+  buzzerTimer->pause();
+}
+
+// Non-blocking sound update function
+void updateSound() {
+  if (!currentSound.isPlaying) return;
+  
+  unsigned long currentTime = millis();
+  
+  // Check if current note has finished playing
+  if (currentTime - currentSound.noteStartTime >= currentSound.notes[currentSound.currentNote].duration) {
+    // Stop current note
+    buzzerTimer->pause();
+    digitalWrite(BUZZER_PIN, LOW);
+    
+    // Move to next note
+    currentSound.currentNote++;
+    
+    // Check if all notes have been played
+    if (currentSound.currentNote >= currentSound.noteCount) {
+      currentSound.isPlaying = false;
+      return;
+    }
+    
+    // Start playing next note
+    currentSound.noteStartTime = currentTime + 10; // 10ms interval
+    
+    uint32_t frequency = currentSound.notes[currentSound.currentNote].frequency;
+    if (frequency != NOTE_REST) {
+      buzzerTimer->setOverflow(frequency, HERTZ_FORMAT);
+      buzzerTimer->setCaptureCompare(1, 50, PERCENT_COMPARE_FORMAT);
+      buzzerTimer->resume();
+    }
+  }
+}
+
+// Play sound sequence
+void playSound(const SoundNote notes[], uint8_t noteCount) {
+  if (noteCount == 0 || noteCount > 8) return;
+  
+  // Stop current sound effect
+  stopSound();
+  
+  // Copy notes to current playback queue
+  for (uint8_t i = 0; i < noteCount; i++) {
+    currentSound.notes[i] = notes[i];
+  }
+  
+  currentSound.noteCount = noteCount;
+  currentSound.currentNote = 0;
+  currentSound.noteStartTime = millis();
+  currentSound.isPlaying = true;
+  
+  // Start playing first note
+  uint32_t frequency = currentSound.notes[0].frequency;
+  if (frequency != NOTE_REST) {
+    buzzerTimer->setOverflow(frequency, HERTZ_FORMAT);
+    buzzerTimer->setCaptureCompare(1, 50, PERCENT_COMPARE_FORMAT);
+    buzzerTimer->resume();
+  }
+}
+
+// Stop sound playback
+void stopSound() {
+  currentSound.isPlaying = false;
+  buzzerTimer->pause();
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+// Move sound effect - short low tone
+void playMoveSound() {
+  const SoundNote notes[] = {{NOTE_C4, 50}};
+  playSound(notes, 1);
+}
+
+// Rotation sound effect - medium tone
+void playRotateSound() {
+  const SoundNote notes[] = {{NOTE_E4, 80}};
+  playSound(notes, 1);
+}
+
+// Drop sound effect - quick descending tone
+void playDropSound() {
+  const SoundNote notes[] = {
+    {NOTE_G4, 60},
+    {NOTE_C4, 40}
+  };
+  playSound(notes, 2);
+}
+
+// Line clear sound effect - ascending scale
+void playLineClearSound() {
+  const SoundNote notes[] = {
+    {NOTE_C5, 100},
+    {NOTE_E5, 100},
+    {NOTE_G5, 150}
+  };
+  playSound(notes, 3);
+}
+
+// Game over sound effect - descending scale
+void playGameOverSound() {
+  const SoundNote notes[] = {
+    {NOTE_C5, 200},
+    {NOTE_B4, 200},
+    {NOTE_A4, 200},
+    {NOTE_G4, 200},
+    {NOTE_F4, 300},
+    {NOTE_E4, 300},
+    {NOTE_D4, 400},
+    {NOTE_C4, 500}
+  };
+  playSound(notes, 8);
+}
+
+// Pause sound effect - simple two-note sequence
+void playPauseSound() {
+  const SoundNote notes[] = {
+    {NOTE_A4, 150},
+    {NOTE_F4, 150}
+  };
+  playSound(notes, 2);
+}
+
+#endif
