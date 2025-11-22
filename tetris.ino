@@ -1,6 +1,11 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <HardwareTimer.h>
+#include <STM32SD.h>
+
+#ifndef FILE_READ
+#define FILE_READ FA_READ
+#endif
 
 // Sound feature toggle - set to 0 if no buzzer is available
 #define ENABLE_SOUND 1
@@ -118,6 +123,8 @@ GameState gameState = SPLASH;
 uint8_t gameField[FIELD_HEIGHT][FIELD_WIDTH] = {0};
 Tetromino current, next, ghost;
 uint32_t score = 0;
+uint32_t highScore = 0;
+const char* SAVE_FILE = "save.txt";
 uint16_t lines = 0;
 uint8_t level = 1;
 unsigned long lastFall = 0;
@@ -162,6 +169,8 @@ void rotatePiece(bool clockwise);
 void updateGhost();
 void resetGame();
 void generateNewBag(uint8_t *bag);
+void loadHighScore();
+void saveHighScore();
 
 #if ENABLE_SOUND
 // Sound-related functions
@@ -176,6 +185,80 @@ void playLineClearSound();
 void playGameOverSound();
 void playPauseSound();
 #endif
+
+void loadHighScore() {
+  if (SD.exists(SAVE_FILE)) {
+    File file = SD.open(SAVE_FILE, FILE_READ);
+    if (file) {
+      while (file.available()) {
+        String line = file.readStringUntil('\n');
+        line.trim();
+        if (line.startsWith("tetris ")) {
+          highScore = line.substring(7).toInt();
+          break;
+        }
+      }
+      file.close();
+    }
+  }
+}
+
+void saveHighScore() {
+  const char* TEMP_FILE = "temp.txt";
+  
+  if (SD.exists(TEMP_FILE)) SD.remove(TEMP_FILE);
+  
+  File tempFile = SD.open(TEMP_FILE, FILE_WRITE);
+  if (!tempFile) return;
+
+  bool found = false;
+  
+  if (SD.exists(SAVE_FILE)) {
+    File originalFile = SD.open(SAVE_FILE, FILE_READ);
+    if (originalFile) {
+      while (originalFile.available()) {
+        String line = originalFile.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+
+        if (line.startsWith("tetris ")) {
+          tempFile.print("tetris ");
+          tempFile.println(highScore);
+          found = true;
+        } else {
+          tempFile.println(line);
+        }
+      }
+      originalFile.close();
+    }
+  }
+  
+  if (!found) {
+    tempFile.print("tetris ");
+    tempFile.println(highScore);
+  }
+  
+  tempFile.close();
+  
+  SD.remove(SAVE_FILE);
+  
+  // Copy temp file back to save file
+  tempFile = SD.open(TEMP_FILE, FILE_READ);
+  File originalFile = SD.open(SAVE_FILE, FILE_WRITE);
+  
+  if (tempFile && originalFile) {
+    uint8_t buf[64];
+    while (tempFile.available()) {
+      int n = tempFile.read(buf, sizeof(buf));
+      originalFile.write(buf, n);
+    }
+  }
+  
+  if (tempFile) tempFile.close();
+  if (originalFile) originalFile.close();
+  
+  SD.remove(TEMP_FILE);
+}
 
 void setup()
 {
@@ -194,6 +277,13 @@ void setup()
 #endif
 
   resetGame();
+  drawMainScreen();
+  drawInfoScreen();
+
+  // Initialize SD Card
+  if (SD.begin()) {
+    loadHighScore();
+  }
 }
 
 bool checkCollision(const Tetromino &t)
@@ -428,10 +518,12 @@ void drawInfoScreen()
       }
     }
 
-    snprintf(buffer, sizeof(buffer), "Score:%lu", score);
-    infoDisp.drawStr(0, 50, buffer);
-    snprintf(buffer, sizeof(buffer), "Level:%d", level);
+    snprintf(buffer, sizeof(buffer), "High:%lu", (score > highScore) ? score : highScore);
     infoDisp.drawStr(0, 60, buffer);
+    snprintf(buffer, sizeof(buffer), "Score:%lu", score);
+    infoDisp.drawStr(0, 70, buffer);
+    snprintf(buffer, sizeof(buffer), "Level:%d", level);
+    infoDisp.drawStr(0, 80, buffer);
 
     if (gameState == SPLASH)
     {
@@ -512,8 +604,13 @@ void loop()
         }
         current = next;
         generateNewPiece(next);
-        if (checkCollision(current))
+        if (checkCollision(current)) {
           gameState = GAME_OVER;
+          if (score > highScore) {
+            highScore = score;
+            saveHighScore();
+          }
+        }
       }
       hardDropPressed = true;
     }
@@ -610,6 +707,10 @@ void loop()
       generateNewPiece(next);
       if (checkCollision(current)) {
         gameState = GAME_OVER;
+        if (score > highScore) {
+          highScore = score;
+          saveHighScore();
+        }
 #if ENABLE_SOUND
         playGameOverSound();
 #endif
