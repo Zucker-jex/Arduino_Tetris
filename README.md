@@ -1,11 +1,15 @@
 # Arduino Tetris Game
 
+[English](README.md) | [中文](README_zh.md)
+
 A classic Tetris implementation based on Arduino and OLED screens, supporting dual-screen display (game main interface + info panel) and developed using an STM32 board.
 
 ## Hardware Requirements
 
 - STM32 development board (e.g., ZLAB_F103VE)
 - 128x64 SSD1306 OLED screens x2 (one SPI + one I2C)
+- SD Card Module (SPI interface)
+- Passive Buzzer
 - 5 push buttons
 - Connection details:
 
@@ -19,6 +23,12 @@ A classic Tetris implementation based on Arduino and OLED screens, supporting du
     SCL -> PB6
     SDA -> PB7
 
+  SD Card:
+    Default SPI pins (MOSI/MISO/SCK/CS)
+
+  Buzzer:
+    Signal -> PA8
+
   Buttons:
     Left   -> PE12
     Right  -> PE8
@@ -31,11 +41,12 @@ A classic Tetris implementation based on Arduino and OLED screens, supporting du
 
 - Arduino IDE or PlatformIO
 - U8g2 library (OLED driver)
+- STM32SD library (SD Card support)
 
 ## Installation Steps
 
 1. Clone this repository.
-2. Install the U8g2 library (via Arduino Library Manager).
+2. Install the U8g2 and STM32SD libraries (via Arduino Library Manager).
 3. Connect the hardware devices.
 4. Compile and upload the code to the development board.
 
@@ -66,9 +77,11 @@ A classic Tetris implementation based on Arduino and OLED screens, supporting du
   - Hard drop: 2 points/line
   - Line clear: 100 points/line × Level
 - 7-bag randomizer
+- High score saving (to SD card, file `save.txt`)
+- Sound effects (Move, Rotate, Drop, Line Clear, Game Over)
 - Dual-screen display:
   - Main screen: Game area
-  - Info screen: Score/Level/Next piece
+  - Info screen: Score/High Score/Level/Next piece
 
 ## License
 
@@ -77,7 +90,6 @@ MIT License - Feel free to use, modify, and distribute the code, but please reta
 ## Known Limitations
 
 - Hold piece feature not yet implemented
-- No sound effects
 - Level acceleration capped at level 15
 
 Please feel free to submit Issues and Pull Requests!
